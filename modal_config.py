@@ -1,4 +1,7 @@
+import os
 import modal
+
+NUM_GPUS = int(os.environ.get("NUM_GPUS", "1"))
 
 app = modal.App("modded-nanogpt")
 
@@ -31,7 +34,7 @@ volumes = {
 REPO = "https://github.com/alyxya/modded-nanogpt.git"
 REPO_DIR = "/root/modded-nanogpt"
 
-@app.function(image=image, gpu="H100", timeout=3600, volumes=volumes)
+@app.function(image=image, gpu=f"H100:{NUM_GPUS}", timeout=3600, volumes=volumes)
 def train(num_data_shards: int = 9):
     """One-command training run: modal run modal_config.py::train"""
     import subprocess, os, shutil
@@ -51,7 +54,7 @@ def train(num_data_shards: int = 9):
 
     # Train
     subprocess.run(
-        ["torchrun", "--standalone", "--nproc_per_node=1", "train_gpt.py"],
+        ["torchrun", "--standalone", f"--nproc_per_node={NUM_GPUS}", "train_gpt.py"],
         cwd=REPO_DIR,
         env={**os.environ, "DATA_PATH": "/mnt/data"},
         check=True,
