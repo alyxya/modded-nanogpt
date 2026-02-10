@@ -13,12 +13,27 @@ pip install modal
 modal setup
 ```
 
-## Dev loop
+## One-command run
+
+```bash
+modal run modal_config.py::train
+```
+
+This clones the repo, downloads data (first time only), trains, and saves logs to the
+persistent volume — all in one shot. Output streams to your terminal in real time.
+
+Pull logs afterwards:
+
+```bash
+modal volume get nanogpt-data logs/ ./modal-logs/
+```
+
+## Interactive dev loop
 
 ### 1. Start an interactive GPU shell
 
 ```bash
-modal shell modal_config.py
+modal shell modal_config.py  # uses train()'s image/gpu/volumes config
 ```
 
 This gives you a bash shell on an H100 with:
@@ -29,7 +44,7 @@ This gives you a bash shell on an H100 with:
 ### 2. Clone the repo
 
 ```bash
-git clone https://github.com/KellerJordan/modded-nanogpt.git && cd modded-nanogpt
+git clone https://github.com/alyxya/modded-nanogpt.git && cd modded-nanogpt
 ```
 
 ### 3. Download training data (first time only)
@@ -77,9 +92,9 @@ modal volume get nanogpt-data logs/ ./modal-logs/
 
 ```bash
 # Full dev loop after first-time data download:
-modal shell modal_config.py
+modal shell modal_config.py  # uses train()'s image/gpu/volumes config
 # then inside the shell:
-git clone https://github.com/KellerJordan/modded-nanogpt.git && cd modded-nanogpt
+git clone https://github.com/alyxya/modded-nanogpt.git && cd modded-nanogpt
 DATA_PATH=/mnt/data torchrun --standalone --nproc_per_node=1 train_gpt.py
 cp -r logs/ /mnt/data/logs/  # save logs before exiting
 ```
@@ -93,7 +108,7 @@ cp -r logs/ /mnt/data/logs/  # save logs before exiting
 | Triton compiled kernels | `/root/.triton` volume | Yes |
 | torch.compile / inductor cache | `/root/.inductor-cache` volume | Yes |
 | CUDA compiler cache | `/root/.nv` volume | Yes |
-| Training logs | `logs/<uuid>.txt` in container; copy to `/mnt/data/logs/` | Only if you copy before exiting |
+| Training logs | `/mnt/data/logs/<uuid>.txt` | Yes (auto-saved by `modal run`, manual `cp` in shell) |
 
 ## Tips
 
