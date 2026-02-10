@@ -51,10 +51,27 @@ On subsequent sessions, the data is already there — skip this step.
 
 ```bash
 # 1 GPU — the code handles world_size=1 via gradient accumulation (8 accum steps)
+# Can't use ./run.sh because it hardcodes --nproc_per_node=8
 DATA_PATH=/mnt/data torchrun --standalone --nproc_per_node=1 train_gpt.py
 ```
 
 The first run will be slower due to Triton/inductor kernel compilation. These compiled kernels are saved to the persistent cache volumes, so subsequent runs start much faster.
+
+### 5. Save logs before exiting
+
+Each run writes a log to `logs/<uuid>.txt` (unique per run, never overwrites). These live
+inside the ephemeral container, so copy them to the persistent volume before exiting:
+
+```bash
+cp -r logs/ /mnt/data/logs/
+```
+
+Logs accumulate across runs on the volume. To pull them to your local machine:
+
+```bash
+# from your local terminal
+modal volume get nanogpt-data logs/ ./modal-logs/
+```
 
 ## Quick reference
 
@@ -64,6 +81,7 @@ modal shell modal_config.py
 # then inside the shell:
 git clone https://github.com/KellerJordan/modded-nanogpt.git && cd modded-nanogpt
 DATA_PATH=/mnt/data torchrun --standalone --nproc_per_node=1 train_gpt.py
+cp -r logs/ /mnt/data/logs/  # save logs before exiting
 ```
 
 ## What's cached where
@@ -75,6 +93,7 @@ DATA_PATH=/mnt/data torchrun --standalone --nproc_per_node=1 train_gpt.py
 | Triton compiled kernels | `/root/.triton` volume | Yes |
 | torch.compile / inductor cache | `/root/.inductor-cache` volume | Yes |
 | CUDA compiler cache | `/root/.nv` volume | Yes |
+| Training logs | `logs/<uuid>.txt` in container; copy to `/mnt/data/logs/` | Only if you copy before exiting |
 
 ## Tips
 
