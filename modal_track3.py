@@ -84,6 +84,7 @@ def train(
     script: str = "records/track_3_optimization/train_gpt_simple.py",
     num_data_shards: int = 40,
     train_steps: int = 0,
+    val_interval: int = 0,
     extra_args: str = "",
 ):
     """Run the Track 3 benchmark on Modal."""
@@ -96,6 +97,10 @@ def train(
         if train_steps < 1:
             raise ValueError("train_steps must be 0 or a positive integer")
         print(f"Overriding train_steps to {train_steps}")
+    if val_interval:
+        if val_interval < 1:
+            raise ValueError("val_interval must be 0 or a positive integer")
+        print(f"Overriding val_interval to {val_interval}")
 
     try:
         print(f"Using local source uploaded to {REMOTE_REPO_DIR}")
@@ -116,6 +121,8 @@ def train(
         env = os.environ.copy()
         if train_steps:
             env["NANOGPT_TRAIN_STEPS"] = str(train_steps)
+        if val_interval:
+            env["NANOGPT_VAL_INTERVAL"] = str(val_interval)
         subprocess.run(command, env=env, check=True)
     finally:
         logs = sorted(
@@ -133,12 +140,14 @@ def main(
     script: str = "records/track_3_optimization/train_gpt_simple.py",
     num_data_shards: int = 40,
     train_steps: int = 0,
+    val_interval: int = 0,
     extra_args: str = "",
 ):
     call = train.spawn(
         script=script,
         num_data_shards=num_data_shards,
         train_steps=train_steps,
+        val_interval=val_interval,
         extra_args=extra_args,
     )
     print(f"Spawned train call: {call.object_id}")
