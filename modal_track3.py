@@ -126,4 +126,5 @@ def main(
     num_data_shards: int = 40,
     extra_args: str = "",
 ):
-    train.remote(script=script, num_data_shards=num_data_shards, extra_args=extra_args)
+    call = train.spawn(script=script, num_data_shards=num_data_shards, extra_args=extra_args)
+    print(f"Spawned train call: {call.object_id}")
