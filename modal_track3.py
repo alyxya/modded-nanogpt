@@ -83,6 +83,7 @@ volumes = {
 def train(
     script: str = "records/track_3_optimization/train_gpt_simple.py",
     num_data_shards: int = 40,
+    train_steps: int = 0,
     extra_args: str = "",
 ):
     """Run the Track 3 benchmark on Modal."""
@@ -91,6 +92,10 @@ def train(
     script_path = REMOTE_REPO_DIR / script
     if not script_path.exists():
         raise FileNotFoundError(f"No training script at {script_path}")
+    if train_steps:
+        if train_steps < 1:
+            raise ValueError("train_steps must be 0 or a positive integer")
+        print(f"Overriding train_steps to {train_steps}")
 
     try:
         print(f"Using local source uploaded to {REMOTE_REPO_DIR}")
@@ -108,7 +113,10 @@ def train(
             *shlex.split(extra_args),
         ]
         print("+ " + " ".join(shlex.quote(part) for part in command))
-        subprocess.run(command, check=True)
+        env = os.environ.copy()
+        if train_steps:
+            env["NANOGPT_TRAIN_STEPS"] = str(train_steps)
+        subprocess.run(command, env=env, check=True)
     finally:
         logs = sorted(
             (REMOTE_REPO_DIR / "logs").glob("*.txt"), key=lambda p: p.stat().st_mtime
@@ -124,7 +132,13 @@ def train(
 def main(
     script: str = "records/track_3_optimization/train_gpt_simple.py",
     num_data_shards: int = 40,
+    train_steps: int = 0,
     extra_args: str = "",
 ):
-    call = train.spawn(script=script, num_data_shards=num_data_shards, extra_args=extra_args)
+    call = train.spawn(
+        script=script,
+        num_data_shards=num_data_shards,
+        train_steps=train_steps,
+        extra_args=extra_args,
+    )
     print(f"Spawned train call: {call.object_id}")

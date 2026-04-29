@@ -15,7 +15,6 @@ from pathlib import Path
 
 import torch
 from torch import Tensor, nn
-from torch.optim import AdamW
 import torch.nn.functional as F
 import torch.distributed as dist
 
@@ -181,38 +180,26 @@ def zeropower_via_newtonschulz5(G: Tensor) -> Tensor:
         X = X.mT
     return X
 
-@torch.compile
-def muon_update(grad, momentum, mu=0.95, nesterov=True):
-    momentum.lerp_(grad, 1 - mu)
-    update = grad.lerp_(momentum, mu) if nesterov else momentum
-    update = zeropower_via_newtonschulz5(update)
-    update *= max(1, grad.size(-2) / grad.size(-1))**0.5
-    return update
-
-class Muon(torch.optim.Optimizer):
-    def __init__(self, params, lr=0.02, weight_decay=0, mu=0.95):
-        assert isinstance(params, list) and len(params) >= 1 and isinstance(params[0], torch.nn.Parameter)
-        params = sorted(params, key=lambda x: x.size(), reverse=True)
-        defaults = dict(lr=lr, weight_decay=weight_decay, mu=mu)
+class GradientDescent(torch.optim.Optimizer):
+    def __init__(self, params, lr=1e-6):
+        defaults = dict(lr=lr)
         super().__init__(params, defaults)
 
     @torch.no_grad()
     def step(self):
-        world_size = dist.get_world_size()
-        rank = dist.get_rank()
         for group in self.param_groups:
-            params = group["params"]
-            params_pad = params + [torch.empty_like(params[-1])] * (world_size - len(params) % world_size)
-            for base_i in range(0, len(params), world_size):
-                if base_i + rank < len(params):
-                    p = params[base_i + rank]
-                    state = self.state[p]
-                    if len(state) == 0:
-                        state["momentum"] = torch.zeros_like(p)
-                    update = muon_update(p.grad, state["momentum"], mu=group["mu"])
-                    p.mul_(1 - group["lr"] * group["weight_decay"])
-                    p.add_(update, alpha=-group["lr"])
-                dist.all_gather(params_pad[base_i:base_i + world_size], params_pad[base_i + rank])
+            for p in group["params"]:
+                if p.grad is not None:
+                    p.add_(p.grad, alpha=-group["lr"])
+
+class NoOpOptimizer(torch.optim.Optimizer):
+    def __init__(self, params, lr=0.0):
+        defaults = dict(lr=lr)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self):
+        pass
 
 
 ########################################
@@ -260,37 +247,30 @@ num_trials = int(sys.argv[-1]) if len(sys.argv) > 1 else 1
 
 for _ in range(num_trials):
 
-
     ########################################
     #       Init & Optim Hyperparams       #
     ########################################
 
     # we want to minimize this while still reaching 3.28 val loss
-    train_steps = 3500
+    train_steps = int(os.environ.get("NANOGPT_TRAIN_STEPS", "3500"))
+    val_interval = int(os.environ.get("NANOGPT_VAL_INTERVAL", "125"))
 
     # initialize model parameters
     for name, p in model.named_parameters():
-        if name.endswith("weight"):
-            if "proj" in name:
-                p.data.zero_()
-            elif "embed" in name:
-                p.data.normal_()  # default torch init
-            else:
-                p.data.normal_(std=0.33**0.5 / p.size(-1)**0.5)  # default torch init
-        elif name.endswith("bias"):
+        if name.endswith(".bias"):
             p.data.zero_()
-        elif name.endswith("gains"):
-            p.data.normal_(mean=1, std=0)
-        else:
-            raise Exception(f"Uninitialized parameter: {name}")
+        elif name.endswith((".attn.proj.weight", ".mlp.proj.weight")):
+            p.data.zero_()
+        elif name.endswith((".attn.q.weight", ".attn.k.weight", ".attn.v.weight", ".mlp.fc.weight")):
+            p.data.normal_(std=p.size(1) ** -0.5)
+        elif name == "proj.weight":
+            p.data.normal_()
 
     # create the optimizer(s)
-    optimizer1 = AdamW([dict(params=[model.embed.weight], lr=0.3),
-                        dict(params=[model.proj.weight], lr=1/320),
-                        dict(params=[p for p in model.parameters() if p.ndim < 2], lr=0.01)],
-                       betas=(0.8, 0.95), eps=1e-10, weight_decay=0, fused=True)
-    optimizer2 = Muon([p for p in model.blocks.parameters() if p.ndim >= 2],
-                      lr=0.025, weight_decay=0.0125)
+    static_params = [p for name, p in model.named_parameters() if name.endswith(".bias") or name.endswith(".gains")]
+    trainable_params = [p for name, p in model.named_parameters() if not (name.endswith(".bias") or name.endswith(".gains"))]
+    optimizer1 = GradientDescent(trainable_params, lr=1e-6)
+    optimizer2 = NoOpOptimizer(static_params, lr=0.0)
     optimizers = [optimizer1, optimizer2]
     assert set(p for opt in optimizers for group in opt.param_groups
                for p in group["params"]) == set(model.parameters())
@@ -326,7 +306,7 @@ for _ in range(num_trials):
     for step in range(train_steps + 1):
 
         # --------------- VALIDATION SECTION -----------------
-        if step == train_steps or step % 125 == 0:
+        if step == train_steps or step % val_interval == 0:
             # stop the clock
             dist.barrier()
             time_since_last_val = time.perf_counter() - t0
