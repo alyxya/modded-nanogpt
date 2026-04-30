@@ -11,7 +11,7 @@ REMOTE_REPO_DIR = Path("/root/modded-nanogpt")
 
 # Set these before `modal run` if you want a different machine shape:
 #   MODAL_GPU_TYPE=A100 MODAL_NUM_GPUS=2 modal run modal_track3.py
-GPU_TYPE = os.environ.get("MODAL_GPU_TYPE", "A100")
+GPU_TYPE = os.environ.get("MODAL_GPU_TYPE", "H100")
 NUM_GPUS = int(os.environ.get("MODAL_NUM_GPUS", "1"))
 TIMEOUT_SECONDS = int(os.environ.get("MODAL_TIMEOUT_SECONDS", str(2 * 60 * 60)))
 
