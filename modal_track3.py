@@ -85,6 +85,8 @@ def train(
     num_data_shards: int = 40,
     train_steps: int = 0,
     val_interval: int = 0,
+    requested_gpu_type: str = GPU_TYPE,
+    requested_num_gpus: int = NUM_GPUS,
     extra_args: str = "",
 ):
     """Run the Track 3 benchmark on Modal."""
@@ -94,14 +96,16 @@ def train(
     visible_gpus = torch.cuda.device_count()
     if visible_gpus < 1:
         raise RuntimeError("No CUDA GPUs are visible inside the Modal container")
-    print(f"Modal GPU request: {GPU_TYPE}:{NUM_GPUS}")
+    print(f"Modal GPU request: {requested_gpu_type}:{requested_num_gpus}")
     print(f"Visible CUDA GPUs: {visible_gpus}")
     try:
         subprocess.run(["nvidia-smi", "-L"], check=False)
     except FileNotFoundError:
         print("nvidia-smi not found")
-    if visible_gpus != NUM_GPUS:
-        print(f"WARNING: requested {NUM_GPUS} GPU(s), but container sees {visible_gpus}")
+    if visible_gpus != requested_num_gpus:
+        print(
+            f"WARNING: requested {requested_num_gpus} GPU(s), but container sees {visible_gpus}"
+        )
 
     script_path = REMOTE_REPO_DIR / script
     if not script_path.exists():
@@ -161,6 +165,8 @@ def main(
         num_data_shards=num_data_shards,
         train_steps=train_steps,
         val_interval=val_interval,
+        requested_gpu_type=GPU_TYPE,
+        requested_num_gpus=NUM_GPUS,
         extra_args=extra_args,
     )
     print(f"Spawned train call: {call.object_id}")
