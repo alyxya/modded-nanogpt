@@ -89,6 +89,19 @@ def train(
 ):
     """Run the Track 3 benchmark on Modal."""
     os.chdir(REMOTE_REPO_DIR)
+    import torch
+
+    visible_gpus = torch.cuda.device_count()
+    if visible_gpus < 1:
+        raise RuntimeError("No CUDA GPUs are visible inside the Modal container")
+    print(f"Modal GPU request: {GPU_TYPE}:{NUM_GPUS}")
+    print(f"Visible CUDA GPUs: {visible_gpus}")
+    try:
+        subprocess.run(["nvidia-smi", "-L"], check=False)
+    except FileNotFoundError:
+        print("nvidia-smi not found")
+    if visible_gpus != NUM_GPUS:
+        print(f"WARNING: requested {NUM_GPUS} GPU(s), but container sees {visible_gpus}")
 
     script_path = REMOTE_REPO_DIR / script
     if not script_path.exists():
@@ -113,7 +126,7 @@ def train(
         command = [
             "torchrun",
             "--standalone",
-            f"--nproc_per_node={NUM_GPUS}",
+            f"--nproc_per_node={visible_gpus}",
             script,
             *shlex.split(extra_args),
         ]
