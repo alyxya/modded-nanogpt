@@ -18,7 +18,11 @@ TIMEOUT_SECONDS = int(os.environ.get("MODAL_TIMEOUT_SECONDS", str(2 * 60 * 60)))
 app = modal.App(APP_NAME)
 
 image = (
-    modal.Image.debian_slim(python_version="3.12")
+    modal.Image.from_registry(
+        "nvidia/cuda:12.8.1-devel-ubuntu24.04",
+        add_python="3.12",
+    )
+    .entrypoint([])
     .apt_install("git")
     .pip_install(
         "torch==2.10",
@@ -36,6 +40,7 @@ image = (
             "TRITON_CACHE_DIR": "/root/.triton",
             "TORCHINDUCTOR_CACHE_DIR": "/root/.inductor-cache",
             "TORCHINDUCTOR_FX_GRAPH_CACHE": "1",
+            "CUDA_HOME": "/usr/local/cuda",
             "PYTHONUNBUFFERED": "1",
         }
     )
