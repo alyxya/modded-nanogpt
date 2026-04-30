@@ -1565,11 +1565,11 @@ class Hyperparameters:
     # batch sizes
     val_batch_size: int = 4 * 64 * 1024 * 8
     # schedule
-    num_scheduled_iterations: int = 1440  # number of steps to complete lr and ws schedule
-    num_extension_iterations: int = 40  # number of steps to continue training at final lr and ws
+    num_scheduled_iterations: int = int(os.environ.get("NANOGPT_TRAIN_STEPS", "1440"))  # number of steps to complete lr and ws schedule
+    num_extension_iterations: int = int(os.environ.get("NANOGPT_EXTENSION_STEPS", "40"))  # number of steps to continue training at final lr and ws
     # evaluation and logging
     run_id: str = f"{uuid.uuid4()}"
-    val_loss_every: int = 250  # every how many steps to evaluate val loss? 0 for only at the end
+    val_loss_every: int = int(os.environ.get("NANOGPT_VAL_INTERVAL", "250"))  # every how many steps to evaluate val loss? 0 for only at the end
     save_checkpoint: bool = False
     run_evals: bool = False  # run additional evaluations after training is completed
     # bigram hash embedding

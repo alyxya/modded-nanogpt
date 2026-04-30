@@ -399,4 +399,3 @@ compared to Shampoo.
 ```
 
 <img src="img/dofa.jpg" alt="itsover_wereback" style="width:100%;">
-
