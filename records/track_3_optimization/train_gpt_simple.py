@@ -313,7 +313,9 @@ for trial_idx in range(num_trials):
 
     # initialize model parameters
     for name, p in model.named_parameters():
-        if name.endswith(".attn.proj.weight"):
+        if name.endswith(".bias"):
+            p.data.zero_()
+        elif name.endswith(".attn.proj.weight"):
             p.data.mul_(1.25)
         elif name.endswith(".mlp.proj.weight"):
             p.data.mul_(3.0)
@@ -332,22 +334,27 @@ for trial_idx in range(num_trials):
     mlp_fc_params = [p for n, p in named_block_params if n.endswith(".mlp.fc.weight")]
     attn_proj_params = [p for n, p in named_block_params if n.endswith(".attn.proj.weight")]
     mlp_proj_params = [p for n, p in named_block_params if n.endswith(".mlp.proj.weight")]
+    bias_params = [p for n, p in model.named_parameters() if n.endswith(".bias")]
 
     # Potato experiment disabled while reproducing the MuonH baseline.
     optimizer1 = AdamW([dict(params=[model.embed.weight], lr=0.3),
                         dict(params=[model.proj.weight], lr=1/320),
-                        dict(params=[p for p in model.parameters() if p.ndim < 2], lr=0.01)],
+                        dict(params=[p for n, p in model.named_parameters()
+                                     if p.ndim < 2 and not n.endswith(".bias")], lr=0.01)],
                        betas=(0.8, 0.95), eps=1e-10, weight_decay=0, fused=True)
     optimizer2 = MuonH(qkv_params, lr=0.018)
     optimizer3 = MuonH(mlp_fc_params, lr=0.018)
     optimizer4 = MuonH(attn_proj_params, lr=0.018)
     optimizer5 = MuonH(mlp_proj_params, lr=0.018)
-    optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5]
+    optimizer6 = NoOpOptimizer(bias_params, lr=0.0)
+    optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5, optimizer6]
     for opt in (optimizer2, optimizer3, optimizer4, optimizer5):
         for group in opt.param_groups:
             group["schedule_type"] = "h"
     for group in optimizer1.param_groups:
         group["schedule_type"] = "aux"
+    for group in optimizer6.param_groups:
+        group["schedule_type"] = "noop"
     assert set(p for opt in optimizers for group in opt.param_groups
                for p in group["params"]) == set(model.parameters())
     for opt in optimizers:
@@ -360,6 +367,9 @@ for trial_idx in range(num_trials):
         assert 0 <= progress < 1
         for opt in optimizers:
             for group in opt.param_groups:
+                if group["schedule_type"] == "noop":
+                    group["lr"] = 0.0
+                    continue
                 cooldown_frac = 1.0 if group["schedule_type"] == "h" else 0.4
                 if progress < 1 - cooldown_frac:
                     eta = 1.0
