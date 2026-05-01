@@ -188,7 +188,7 @@ def _row_normalized(x: Tensor, target_norm: float) -> Tensor:
     return x * scale
 
 class PotatoOptimizer(torch.optim.Optimizer):
-    def __init__(self, param_groups, lr=1e-3, projection_warmup_steps=100):
+    def __init__(self, param_groups, lr=1e-2, projection_warmup_steps=100):
         defaults = dict(lr=lr)
         super().__init__(param_groups, defaults)
         self.step_count = 0
@@ -293,7 +293,7 @@ for _ in range(num_trials):
             trainable_groups.append(dict(params=[p], target_norm=1.0))
         else:
             raise ValueError(f"Unexpected trainable parameter: {name}")
-    optimizer1 = PotatoOptimizer(trainable_groups, lr=1e-3, projection_warmup_steps=100)
+    optimizer1 = PotatoOptimizer(trainable_groups, lr=1e-2, projection_warmup_steps=100)
     optimizer2 = NoOpOptimizer(static_params, lr=0.0)
     optimizers = [optimizer1, optimizer2]
     assert set(p for opt in optimizers for group in opt.param_groups
