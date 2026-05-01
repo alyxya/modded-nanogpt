@@ -275,10 +275,8 @@ for _ in range(num_trials):
             p.data.zero_()
         elif name.endswith((".attn.proj.weight", ".mlp.proj.weight")):
             p.data.zero_()
-        elif name.endswith((".attn.q.weight", ".attn.k.weight", ".attn.v.weight", ".mlp.fc.weight")):
+        elif name == "proj.weight" or name.endswith((".attn.q.weight", ".attn.k.weight", ".attn.v.weight", ".mlp.fc.weight")):
             p.data.normal_(std=p.size(1) ** -0.5)
-        elif name == "proj.weight":
-            p.data.normal_()
 
     # create the optimizer(s)
     static_params = [p for name, p in model.named_parameters() if name.endswith(".bias") or name.endswith(".gains")]
@@ -287,11 +285,11 @@ for _ in range(num_trials):
     for name, p in model.named_parameters():
         if name.endswith(".bias") or name.endswith(".gains"):
             continue
-        if name in ("embed.weight", "proj.weight"):
+        if name == "embed.weight":
             trainable_groups.append(dict(params=[p], target_norm=residual_dim**0.5))
         elif name.endswith((".attn.proj.weight", ".mlp.proj.weight")):
             trainable_groups.append(dict(params=[p], target_norm=1.0, warmup_norm=True))
-        elif name.endswith((".attn.q.weight", ".attn.k.weight", ".attn.v.weight", ".mlp.fc.weight")):
+        elif name == "proj.weight" or name.endswith((".attn.q.weight", ".attn.k.weight", ".attn.v.weight", ".mlp.fc.weight")):
             trainable_groups.append(dict(params=[p], target_norm=1.0))
         else:
             raise ValueError(f"Unexpected trainable parameter: {name}")
