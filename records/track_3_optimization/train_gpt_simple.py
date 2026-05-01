@@ -15,6 +15,7 @@ from pathlib import Path
 
 import torch
 from torch import Tensor, nn
+from torch.optim import AdamW
 import torch.nn.functional as F
 import torch.distributed as dist
 
@@ -215,6 +216,46 @@ class NoOpOptimizer(torch.optim.Optimizer):
     def step(self):
         pass
 
+@torch.compile
+def muon_update(grad, momentum, mu=0.95, nesterov=True):
+    momentum.lerp_(grad, 1 - mu)
+    update = grad.lerp_(momentum, mu) if nesterov else momentum
+    update = zeropower_via_newtonschulz5(update)
+    update *= max(1, grad.size(-2) / grad.size(-1))**0.5
+    return update
+
+@torch.no_grad()
+def scale_invariant_update_(param: Tensor, update: Tensor, lr: float, eps: float = 1e-10) -> None:
+    p_norm = param.norm()
+    u_norm = update.norm()
+    new_param = param - lr * update * p_norm / torch.clamp(u_norm, min=eps)
+    new_norm = torch.clamp(new_param.norm(), min=eps)
+    param.copy_(new_param / new_norm * p_norm)
+
+class MuonH(torch.optim.Optimizer):
+    def __init__(self, params, lr=0.014, mu=0.95):
+        assert isinstance(params, list) and len(params) >= 1 and isinstance(params[0], torch.nn.Parameter)
+        params = sorted(params, key=lambda x: x.size(), reverse=True)
+        defaults = dict(lr=lr, mu=mu)
+        super().__init__(params, defaults)
+
+    @torch.no_grad()
+    def step(self):
+        world_size = dist.get_world_size()
+        rank = dist.get_rank()
+        for group in self.param_groups:
+            params = group["params"]
+            params_pad = params + [torch.empty_like(params[-1])] * (world_size - len(params) % world_size)
+            for base_i in range(0, len(params), world_size):
+                if base_i + rank < len(params):
+                    p = params[base_i + rank]
+                    state = self.state[p]
+                    if len(state) == 0:
+                        state["momentum"] = torch.zeros_like(p)
+                    update = muon_update(p.grad, state["momentum"], mu=group["mu"])
+                    scale_invariant_update_(p, update, group["lr"])
+                dist.all_gather(params_pad[base_i:base_i + world_size], params_pad[base_i + rank])
+
 
 ########################################
 #                Setup                 #
@@ -266,36 +307,46 @@ for _ in range(num_trials):
     ########################################
 
     # we want to minimize this while still reaching 3.28 val loss
-    train_steps = int(os.environ.get("NANOGPT_TRAIN_STEPS", "3500"))
+    train_steps = int(os.environ.get("NANOGPT_TRAIN_STEPS", "3325"))
     val_interval = int(os.environ.get("NANOGPT_VAL_INTERVAL", "125"))
 
     # initialize model parameters
     for name, p in model.named_parameters():
-        if name.endswith(".bias"):
+        if name.endswith(".attn.proj.weight"):
+            p.data.mul_(1.25)
+        elif name.endswith(".mlp.proj.weight"):
+            p.data.mul_(3.0)
+        elif name.endswith(".mlp.fc.weight"):
+            p.data.mul_(1.5)
+        elif name == "proj.weight":
             p.data.zero_()
-        elif name.endswith((".attn.proj.weight", ".mlp.proj.weight")):
+        elif "proj" in name:
             p.data.zero_()
-        elif name == "proj.weight" or name.endswith((".attn.q.weight", ".attn.k.weight", ".attn.v.weight", ".mlp.fc.weight")):
-            p.data.normal_(std=p.size(1) ** -0.5)
 
     # create the optimizer(s)
-    static_params = [p for name, p in model.named_parameters() if name.endswith(".bias") or name.endswith(".gains")]
-    residual_dim = model.embed.weight.size(1)
-    trainable_groups = []
-    for name, p in model.named_parameters():
-        if name.endswith(".bias") or name.endswith(".gains"):
-            continue
-        if name == "embed.weight":
-            trainable_groups.append(dict(params=[p], target_norm=residual_dim**0.5))
-        elif name.endswith((".attn.proj.weight", ".mlp.proj.weight")):
-            trainable_groups.append(dict(params=[p], target_norm=1.0, warmup_norm=True))
-        elif name == "proj.weight" or name.endswith((".attn.q.weight", ".attn.k.weight", ".attn.v.weight", ".mlp.fc.weight")):
-            trainable_groups.append(dict(params=[p], target_norm=1.0))
-        else:
-            raise ValueError(f"Unexpected trainable parameter: {name}")
-    optimizer1 = PotatoOptimizer(trainable_groups, lr=1e-2, projection_warmup_steps=100)
-    optimizer2 = NoOpOptimizer(static_params, lr=0.0)
-    optimizers = [optimizer1, optimizer2]
+    named_block_params = [(n, p) for n, p in model.named_parameters()
+                          if n.startswith("blocks.") and p.ndim >= 2]
+    qkv_params = [p for n, p in named_block_params
+                  if n.endswith(".attn.q.weight") or n.endswith(".attn.k.weight") or n.endswith(".attn.v.weight")]
+    mlp_fc_params = [p for n, p in named_block_params if n.endswith(".mlp.fc.weight")]
+    attn_proj_params = [p for n, p in named_block_params if n.endswith(".attn.proj.weight")]
+    mlp_proj_params = [p for n, p in named_block_params if n.endswith(".mlp.proj.weight")]
+
+    # Potato experiment disabled while reproducing the MuonH baseline.
+    optimizer1 = AdamW([dict(params=[model.embed.weight], lr=0.3),
+                        dict(params=[model.proj.weight], lr=1/320),
+                        dict(params=[p for p in model.parameters() if p.ndim < 2], lr=0.01)],
+                       betas=(0.8, 0.95), eps=1e-10, weight_decay=0, fused=True)
+    optimizer2 = MuonH(qkv_params, lr=0.018)
+    optimizer3 = MuonH(mlp_fc_params, lr=0.018)
+    optimizer4 = MuonH(attn_proj_params, lr=0.018)
+    optimizer5 = MuonH(mlp_proj_params, lr=0.018)
+    optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5]
+    for opt in (optimizer2, optimizer3, optimizer4, optimizer5):
+        for group in opt.param_groups:
+            group["schedule_type"] = "h"
+    for group in optimizer1.param_groups:
+        group["schedule_type"] = "aux"
     assert set(p for opt in optimizers for group in opt.param_groups
                for p in group["params"]) == set(model.parameters())
     for opt in optimizers:
@@ -303,15 +354,16 @@ for _ in range(num_trials):
             group["initial_lr"] = group["lr"]
 
     # learning rate schedule: stable then decay
-    def set_hparams(step, cooldown_frac=0.7):
+    def set_hparams(step):
         progress = step / train_steps
         assert 0 <= progress < 1
-        if progress < 1 - cooldown_frac:
-            eta = 1.0
-        else:
-            eta = (1 - progress) / cooldown_frac
         for opt in optimizers:
             for group in opt.param_groups:
+                cooldown_frac = 1.0 if group["schedule_type"] == "h" else 0.4
+                if progress < 1 - cooldown_frac:
+                    eta = 1.0
+                else:
+                    eta = (1 - progress) / cooldown_frac
                 group["lr"] = group["initial_lr"] * eta
 
 
