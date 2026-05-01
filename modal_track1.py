@@ -91,7 +91,7 @@ def train(
     script: str = "train_gpt.py",
     num_data_shards: int = 9,
     train_steps: int = 0,
-    extension_steps: int = -1,
+    extension_steps: int = 0,
     val_interval: int = 0,
     requested_gpu_type: str = GPU_TYPE,
     requested_num_gpus: int = NUM_GPUS,
@@ -122,7 +122,9 @@ def train(
         if train_steps < 1:
             raise ValueError("train_steps must be 0 or a positive integer")
         print(f"Overriding scheduled train steps to {train_steps}")
-    if extension_steps >= 0:
+    if extension_steps:
+        if extension_steps < 1:
+            raise ValueError("extension_steps must be 0 or a positive integer")
         print(f"Overriding extension steps to {extension_steps}")
     if val_interval:
         if val_interval < 1:
@@ -148,9 +150,7 @@ def train(
         env = os.environ.copy()
         if train_steps:
             env["NANOGPT_TRAIN_STEPS"] = str(train_steps)
-            if extension_steps < 0:
-                env["NANOGPT_EXTENSION_STEPS"] = "0"
-        if extension_steps >= 0:
+        if extension_steps:
             env["NANOGPT_EXTENSION_STEPS"] = str(extension_steps)
         if val_interval:
             env["NANOGPT_VAL_INTERVAL"] = str(val_interval)
@@ -171,7 +171,7 @@ def main(
     script: str = "train_gpt.py",
     num_data_shards: int = 9,
     train_steps: int = 0,
-    extension_steps: int = -1,
+    extension_steps: int = 0,
     val_interval: int = 0,
     extra_args: str = "",
 ):
