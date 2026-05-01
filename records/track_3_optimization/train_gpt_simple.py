@@ -299,8 +299,9 @@ model.compile(dynamic=False)
 
 
 num_trials = int(sys.argv[-1]) if len(sys.argv) > 1 else 1
+checkpoint_dir = os.environ.get("NANOGPT_CHECKPOINT_DIR")
 
-for _ in range(num_trials):
+for trial_idx in range(num_trials):
 
     ########################################
     #       Init & Optim Hyperparams       #
@@ -379,6 +380,7 @@ for _ in range(num_trials):
     last_val_step = 0
     dist.barrier()
     t0 = time.perf_counter()
+    final_val_loss = None
     for step in range(train_steps + 1):
 
         # --------------- VALIDATION SECTION -----------------
@@ -397,6 +399,7 @@ for _ in range(num_trials):
                     val_loss += model(val_inputs[i*mbs:(i+1)*mbs], val_targets[i*mbs:(i+1)*mbs])
             dist.all_reduce(val_loss, op=dist.ReduceOp.SUM)
             val_loss /= val_tokens
+            final_val_loss = val_loss.item()
             print0(f"step:{step}/{train_steps} val_loss:{val_loss:.5f} train_time:{training_time:.3f}s"
                    + f" step_avg:{1000*step_avg:.2f}ms", console=True)
             model.train()
@@ -424,5 +427,23 @@ for _ in range(num_trials):
         approx_training_time = training_time + (time.perf_counter() - t0)
         print0(f"step:{step+1}/{train_steps} train_time:{approx_training_time:.3f}s"
                + f" step_avg:{1000*approx_training_time/(step + 1):.2f}ms", console=True, log=False)
+
+    if checkpoint_dir is not None and dist.get_rank() == 0:
+        checkpoint_path = Path(checkpoint_dir)
+        checkpoint_path.mkdir(parents=True, exist_ok=True)
+        output_path = checkpoint_path / f"{Path(logfile).stem}_trial{trial_idx}_step{train_steps}.pt"
+        tmp_path = output_path.with_suffix(".tmp")
+        torch.save({
+            "model": model.state_dict(),
+            "train_steps": train_steps,
+            "val_interval": val_interval,
+            "final_val_loss": final_val_loss,
+            "trial_idx": trial_idx,
+            "world_size": dist.get_world_size(),
+            "torch_version": torch.version.__version__,
+            "cuda_version": torch.version.cuda,
+        }, tmp_path)
+        tmp_path.replace(output_path)
+        print0(f"Saved final checkpoint: {output_path}", console=True)
 
 dist.destroy_process_group()

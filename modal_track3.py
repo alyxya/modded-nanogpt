@@ -51,6 +51,7 @@ image = (
             "data/fineweb10B",
             "fineweb10B",
             "logs",
+            "checkpoints",
         ],
     )
 )
@@ -61,6 +62,9 @@ volumes = {
     ),
     str(REMOTE_REPO_DIR / "logs"): modal.Volume.from_name(
         "nanogpt-track3-logs", create_if_missing=True
+    ),
+    str(REMOTE_REPO_DIR / "checkpoints"): modal.Volume.from_name(
+        "nanogpt-track3-checkpoints", create_if_missing=True
     ),
     "/root/.triton": modal.Volume.from_name(
         "nanogpt-track3-triton-cache", create_if_missing=True
@@ -140,6 +144,7 @@ def train(
             env["NANOGPT_TRAIN_STEPS"] = str(train_steps)
         if val_interval:
             env["NANOGPT_VAL_INTERVAL"] = str(val_interval)
+        env["NANOGPT_CHECKPOINT_DIR"] = str(REMOTE_REPO_DIR / "checkpoints")
         subprocess.run(command, env=env, check=True)
     finally:
         logs = sorted(
