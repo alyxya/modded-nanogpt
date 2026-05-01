@@ -180,17 +180,31 @@ def zeropower_via_newtonschulz5(G: Tensor) -> Tensor:
         X = X.mT
     return X
 
-class GradientDescent(torch.optim.Optimizer):
-    def __init__(self, params, lr=1e-6):
+def _row_normalized(x: Tensor, target_norm: float) -> Tensor:
+    if target_norm == 0:
+        return torch.zeros_like(x)
+    row_norm = x.norm(dim=-1, keepdim=True)
+    scale = target_norm / row_norm.clamp_min(1e-12)
+    return x * scale
+
+class PotatoOptimizer(torch.optim.Optimizer):
+    def __init__(self, param_groups, lr=1e-3, projection_warmup_steps=1000):
         defaults = dict(lr=lr)
-        super().__init__(params, defaults)
+        super().__init__(param_groups, defaults)
+        self.step_count = 0
+        self.projection_warmup_steps = projection_warmup_steps
 
     @torch.no_grad()
     def step(self):
+        projection_norm = min(1.0, (self.step_count + 1) / self.projection_warmup_steps)
         for group in self.param_groups:
+            target_norm = projection_norm if group.get("warmup_norm", False) else group["target_norm"]
             for p in group["params"]:
                 if p.grad is not None:
-                    p.add_(p.grad, alpha=-group["lr"])
+                    candidate = _row_normalized(-p.grad, target_norm)
+                    p.lerp_(candidate, group["lr"])
+                    p.copy_(_row_normalized(p, target_norm))
+        self.step_count += 1
 
 class NoOpOptimizer(torch.optim.Optimizer):
     def __init__(self, params, lr=0.0):
@@ -268,8 +282,20 @@ for _ in range(num_trials):
 
     # create the optimizer(s)
     static_params = [p for name, p in model.named_parameters() if name.endswith(".bias") or name.endswith(".gains")]
-    trainable_params = [p for name, p in model.named_parameters() if not (name.endswith(".bias") or name.endswith(".gains"))]
-    optimizer1 = GradientDescent(trainable_params, lr=1e-6)
+    residual_dim = model.embed.weight.size(1)
+    trainable_groups = []
+    for name, p in model.named_parameters():
+        if name.endswith(".bias") or name.endswith(".gains"):
+            continue
+        if name in ("embed.weight", "proj.weight"):
+            trainable_groups.append(dict(params=[p], target_norm=residual_dim**0.5))
+        elif name.endswith((".attn.proj.weight", ".mlp.proj.weight")):
+            trainable_groups.append(dict(params=[p], target_norm=1.0, warmup_norm=True))
+        elif name.endswith((".attn.q.weight", ".attn.k.weight", ".attn.v.weight", ".mlp.fc.weight")):
+            trainable_groups.append(dict(params=[p], target_norm=1.0))
+        else:
+            raise ValueError(f"Unexpected trainable parameter: {name}")
+    optimizer1 = PotatoOptimizer(trainable_groups, lr=1e-3, projection_warmup_steps=1000)
     optimizer2 = NoOpOptimizer(static_params, lr=0.0)
     optimizers = [optimizer1, optimizer2]
     assert set(p for opt in optimizers for group in opt.param_groups
