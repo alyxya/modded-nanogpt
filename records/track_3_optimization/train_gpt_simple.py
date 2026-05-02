@@ -315,6 +315,8 @@ for trial_idx in range(num_trials):
     for name, p in model.named_parameters():
         if name.endswith(".bias"):
             p.data.zero_()
+        elif name.endswith(".gains"):
+            p.data.fill_(1)
         elif name.endswith(".attn.proj.weight"):
             p.data.mul_(1.25)
         elif name.endswith(".mlp.proj.weight"):
@@ -334,19 +336,19 @@ for trial_idx in range(num_trials):
     mlp_fc_params = [p for n, p in named_block_params if n.endswith(".mlp.fc.weight")]
     attn_proj_params = [p for n, p in named_block_params if n.endswith(".attn.proj.weight")]
     mlp_proj_params = [p for n, p in named_block_params if n.endswith(".mlp.proj.weight")]
-    bias_params = [p for n, p in model.named_parameters() if n.endswith(".bias")]
+    static_params = [p for n, p in model.named_parameters() if n.endswith(".bias") or n.endswith(".gains")]
 
     # Potato experiment disabled while reproducing the MuonH baseline.
     optimizer1 = AdamW([dict(params=[model.embed.weight], lr=0.3),
                         dict(params=[model.proj.weight], lr=1/320),
                         dict(params=[p for n, p in model.named_parameters()
-                                     if p.ndim < 2 and not n.endswith(".bias")], lr=0.01)],
+                                     if p.ndim < 2 and not (n.endswith(".bias") or n.endswith(".gains"))], lr=0.01)],
                        betas=(0.8, 0.95), eps=1e-10, weight_decay=0, fused=True)
     optimizer2 = MuonH(qkv_params, lr=0.018)
     optimizer3 = MuonH(mlp_fc_params, lr=0.018)
     optimizer4 = MuonH(attn_proj_params, lr=0.018)
     optimizer5 = MuonH(mlp_proj_params, lr=0.018)
-    optimizer6 = NoOpOptimizer(bias_params, lr=0.0)
+    optimizer6 = NoOpOptimizer(static_params, lr=0.0)
     optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5, optimizer6]
     for opt in (optimizer2, optimizer3, optimizer4, optimizer5):
         for group in opt.param_groups:
