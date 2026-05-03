@@ -282,6 +282,11 @@ def print0(s, console=False, log=True):
             with open(logfile, "a") as f:
                 print(s, file=f)
 
+def format_row_norm_stats(name: str, w: Tensor) -> str:
+    norms = w.detach().float().norm(dim=1)
+    return (f"{name}_row_norm mean:{norms.mean():.4f} std:{norms.std():.4f}"
+            + f" min:{norms.min():.4f} p50:{norms.median():.4f} max:{norms.max():.4f}")
+
 # we begin by logging this file itself
 print0(code)
 print0("="*100)
@@ -414,6 +419,8 @@ for trial_idx in range(num_trials):
             final_val_loss = val_loss.item()
             print0(f"step:{step}/{train_steps} val_loss:{val_loss:.5f} train_time:{training_time:.3f}s"
                    + f" step_avg:{1000*step_avg:.2f}ms", console=True)
+            print0(format_row_norm_stats("embed.weight", model.embed.weight), console=True)
+            print0(format_row_norm_stats("proj.weight", model.proj.weight), console=True)
             model.train()
             # start the clock again
             dist.barrier()
