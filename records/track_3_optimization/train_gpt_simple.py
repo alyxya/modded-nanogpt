@@ -189,8 +189,8 @@ def _row_normalized(x: Tensor, target_norm: float) -> Tensor:
     return x * scale
 
 class PotatoOptimizer(torch.optim.Optimizer):
-    def __init__(self, param_groups, lr=1e-2, projection_warmup_steps=100):
-        defaults = dict(lr=lr)
+    def __init__(self, param_groups, lr=1e-2, mu=0.95, nesterov=True, projection_warmup_steps=100):
+        defaults = dict(lr=lr, mu=mu, nesterov=nesterov)
         super().__init__(param_groups, defaults)
         self.step_count = 0
         self.projection_warmup_steps = projection_warmup_steps
@@ -202,7 +202,13 @@ class PotatoOptimizer(torch.optim.Optimizer):
             target_norm = projection_norm if group.get("warmup_norm", False) else group["target_norm"]
             for p in group["params"]:
                 if p.grad is not None:
-                    candidate = _row_normalized(-p.grad, target_norm)
+                    state = self.state[p]
+                    if len(state) == 0:
+                        state["momentum"] = torch.zeros_like(p)
+                    momentum = state["momentum"]
+                    momentum.lerp_(p.grad, 1 - group["mu"])
+                    update = p.grad.lerp(momentum, group["mu"]) if group["nesterov"] else momentum
+                    candidate = _row_normalized(-update, target_norm)
                     p.lerp_(candidate, group["lr"])
                     p.copy_(_row_normalized(p, target_norm))
         self.step_count += 1
