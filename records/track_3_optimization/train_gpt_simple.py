@@ -188,7 +188,7 @@ def _row_normalized(x: Tensor, target_norm: float) -> Tensor:
     return x * scale
 
 class PotatoOptimizer(torch.optim.Optimizer):
-    def __init__(self, param_groups, lr=1e-2, mu=0.95, nesterov=True, projection_warmup_steps=100):
+    def __init__(self, param_groups, lr=1e-2, mu=0.95, nesterov=True, projection_warmup_steps=500):
         defaults = dict(lr=lr, mu=mu, nesterov=nesterov)
         super().__init__(param_groups, defaults)
         self.step_count = 0
@@ -347,7 +347,7 @@ for trial_idx in range(num_trials):
 
     potato_groups = [
         dict(params=[model.embed.weight], target_norm=residual_dim**0.5),
-        dict(params=[model.proj.weight], target_norm=1.0),
+        dict(params=[model.proj.weight], target_norm=2.0),
         dict(params=qkv_params, target_norm=1.0),
         dict(params=mlp_fc_params, target_norm=1.0),
         dict(params=attn_proj_params, target_norm=1.0, warmup_norm=True),
