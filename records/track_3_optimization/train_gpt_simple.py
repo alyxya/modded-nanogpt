@@ -207,9 +207,9 @@ class PotatoOptimizer(torch.optim.Optimizer):
                     momentum = state["momentum"]
                     momentum.lerp_(p.grad, 1 - group["mu"])
                     update = p.grad.lerp(momentum, group["mu"]) if group["nesterov"] else momentum
-                    candidate = _row_normalized(-update, target_norm)
+                    candidate = _row_normalized(-update, target_norm).to(dtype=p.dtype)
                     p.lerp_(candidate, group["lr"])
-                    p.copy_(_row_normalized(p, target_norm))
+                    p.copy_(_row_normalized(p, target_norm).to(dtype=p.dtype))
         self.step_count += 1
 
 class NoOpOptimizer(torch.optim.Optimizer):
@@ -327,14 +327,10 @@ for trial_idx in range(num_trials):
             p.data.zero_()
         elif name.endswith(".gains"):
             p.data.fill_(1)
-        elif name.endswith(".attn.proj.weight"):
-            p.data.mul_(1.25)
-        elif name.endswith(".mlp.proj.weight"):
-            p.data.mul_(3.0)
-        elif name.endswith(".mlp.fc.weight"):
-            p.data.mul_(1.5)
-        elif name == "proj.weight":
+        elif name.endswith((".attn.proj.weight", ".mlp.proj.weight")):
             p.data.zero_()
+        elif name == "proj.weight" or name.endswith((".attn.q.weight", ".attn.k.weight", ".attn.v.weight", ".mlp.fc.weight")):
+            p.data.normal_(std=p.size(1) ** -0.5)
         elif "proj" in name:
             p.data.zero_()
 
@@ -349,22 +345,20 @@ for trial_idx in range(num_trials):
     static_params = [p for n, p in model.named_parameters() if n.endswith(".bias") or n.endswith(".gains")]
     residual_dim = model.embed.weight.size(1)
 
-    optimizer1 = PotatoOptimizer([
+    potato_groups = [
         dict(params=[model.embed.weight], target_norm=residual_dim**0.5),
         dict(params=[model.proj.weight], target_norm=1.0),
-    ], lr=1e-2)
-    optimizer2 = MuonH(qkv_params, lr=0.018)
-    optimizer3 = MuonH(mlp_fc_params, lr=0.018)
-    optimizer4 = MuonH(attn_proj_params, lr=0.018)
-    optimizer5 = MuonH(mlp_proj_params, lr=0.018)
-    optimizer6 = NoOpOptimizer(static_params, lr=0.0)
-    optimizers = [optimizer1, optimizer2, optimizer3, optimizer4, optimizer5, optimizer6]
-    for opt in (optimizer2, optimizer3, optimizer4, optimizer5):
-        for group in opt.param_groups:
-            group["schedule_type"] = "h"
+        dict(params=qkv_params, target_norm=1.0),
+        dict(params=mlp_fc_params, target_norm=1.0),
+        dict(params=attn_proj_params, target_norm=1.0, warmup_norm=True),
+        dict(params=mlp_proj_params, target_norm=1.0, warmup_norm=True),
+    ]
+    optimizer1 = PotatoOptimizer(potato_groups, lr=1e-2)
+    optimizer2 = NoOpOptimizer(static_params, lr=0.0)
+    optimizers = [optimizer1, optimizer2]
     for group in optimizer1.param_groups:
         group["schedule_type"] = "aux"
-    for group in optimizer6.param_groups:
+    for group in optimizer2.param_groups:
         group["schedule_type"] = "noop"
     assert set(p for opt in optimizers for group in opt.param_groups
                for p in group["params"]) == set(model.parameters())
