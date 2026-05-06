@@ -15,7 +15,6 @@ from pathlib import Path
 
 import torch
 from torch import Tensor, nn
-from torch.optim import AdamW
 import torch.nn.functional as F
 import torch.distributed as dist
 
@@ -348,13 +347,12 @@ for trial_idx in range(num_trials):
     attn_proj_params = [p for n, p in named_block_params if n.endswith(".attn.proj.weight")]
     mlp_proj_params = [p for n, p in named_block_params if n.endswith(".mlp.proj.weight")]
     static_params = [p for n, p in model.named_parameters() if n.endswith(".bias") or n.endswith(".gains")]
+    residual_dim = model.embed.weight.size(1)
 
-    # Potato experiment disabled while reproducing the MuonH baseline.
-    optimizer1 = AdamW([dict(params=[model.embed.weight], lr=0.3),
-                        dict(params=[model.proj.weight], lr=1/320),
-                        dict(params=[p for n, p in model.named_parameters()
-                                     if p.ndim < 2 and not (n.endswith(".bias") or n.endswith(".gains"))], lr=0.01)],
-                       betas=(0.8, 0.95), eps=1e-10, weight_decay=0, fused=True)
+    optimizer1 = PotatoOptimizer([
+        dict(params=[model.embed.weight], target_norm=residual_dim**0.5),
+        dict(params=[model.proj.weight], target_norm=1.0),
+    ], lr=1e-2)
     optimizer2 = MuonH(qkv_params, lr=0.018)
     optimizer3 = MuonH(mlp_fc_params, lr=0.018)
     optimizer4 = MuonH(attn_proj_params, lr=0.018)
