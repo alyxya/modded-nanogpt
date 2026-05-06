@@ -375,6 +375,9 @@ for trial_idx in range(num_trials):
                 if group["schedule_type"] == "noop":
                     group["lr"] = 0.0
                     continue
+                if group["schedule_type"] == "aux":
+                    group["lr"] = group["initial_lr"]
+                    continue
                 cooldown_frac = 1.0 if group["schedule_type"] == "h" else 0.4
                 if progress < 1 - cooldown_frac:
                     eta = 1.0
